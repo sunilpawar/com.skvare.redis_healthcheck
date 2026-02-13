@@ -1,0 +1,721 @@
+<?php
+/**
+ * CRM_Redishealthcheck_Check
+ *
+ * Comprehensive Redis health check implementation
+ */
+class CRM_Redishealthcheck_Check {
+
+  /**
+   * Redis connection instance
+   * @var Redis
+   */
+  private $redis = NULL;
+
+  /**
+   * Configuration from CiviCRM constants
+   * @var array
+   */
+  private $config = [];
+
+  /**
+   * Check results
+   * @var array
+   */
+  private $results = [];
+
+  /**
+   * Constructor - Initialize configuration
+   */
+  public function __construct() {
+    $this->loadConfiguration();
+  }
+
+  /**
+   * Load Redis configuration from CiviCRM constants
+   */
+  private function loadConfiguration() {
+    $this->config = [
+      'enabled' => defined('CIVICRM_DB_CACHE_CLASS') &&
+        in_array(CIVICRM_DB_CACHE_CLASS, ['Redis', 'redis']),
+      'class' => defined('CIVICRM_DB_CACHE_CLASS') ? CIVICRM_DB_CACHE_CLASS : 'N/A',
+      'host' => defined('CIVICRM_DB_CACHE_HOST') ? CIVICRM_DB_CACHE_HOST : 'localhost',
+      'port' => defined('CIVICRM_DB_CACHE_PORT') ? CIVICRM_DB_CACHE_PORT : 6379,
+      'password' => defined('CIVICRM_DB_CACHE_PASSWORD') ? CIVICRM_DB_CACHE_PASSWORD : NULL,
+      'timeout' => defined('CIVICRM_DB_CACHE_TIMEOUT') ? CIVICRM_DB_CACHE_TIMEOUT : 3600,
+      'prefix' => defined('CIVICRM_DB_CACHE_PREFIX') ? CIVICRM_DB_CACHE_PREFIX : 'civicrm_',
+    ];
+    CRM_Core_Error::debug_var('Redis Health Check Configuration', $this->config);
+  }
+
+  /**
+   * Perform all Redis health checks
+   * @return array CiviCRM status check messages
+   */
+  public function performChecks() {
+    $this->results = [];
+
+    // If Redis is not enabled, return early
+    if (!$this->config['enabled']) {
+      return $this->createWarningMessage(
+        'Redis Not Configured',
+        'Redis caching is not enabled in CiviCRM configuration',
+        'CIVICRM_DB_CACHE_CLASS is not set to Redis'
+      );
+    }
+
+    // Attempt connection
+    $connectionStatus = $this->checkConnection();
+    CRM_Core_Error::debug_var('Redis Connection Status', $connectionStatus);
+    if (!$connectionStatus['connected']) {
+      return $this->createErrorMessage(
+        'Redis Connection Failed',
+        'Unable to connect to Redis server',
+        $connectionStatus['error']
+      );
+    }
+
+    // If connected, perform additional checks
+    $this->checkRedisReachability();
+    $this->checkConfiguration();
+    $this->checkMemoryUsage();
+    $this->checkKeyHealth();
+    $this->checkPerformanceMetrics();
+    $this->checkEvictionPolicy();
+    $this->checkPersistence();
+    $this->checkClientConnections();
+
+    // Close connection
+    $this->disconnectRedis();
+
+    return $this->results;
+  }
+
+  /**
+   * Check Redis connection
+   * @return array Connection status and error details
+   */
+  private function checkConnection() {
+    try {
+      if (!extension_loaded('redis')) {
+        return [
+          'connected' => FALSE,
+          'error' => 'Redis PHP extension is not installed'
+        ];
+      }
+
+      $this->redis = new Redis();
+      $timeout = 5; // Connection timeout in seconds
+
+      $connected = @$this->redis->connect(
+        $this->config['host'],
+        $this->config['port'],
+        $timeout
+      );
+
+      if (!$connected) {
+        return [
+          'connected' => FALSE,
+          'error' => "Failed to connect to Redis at {$this->config['host']}:{$this->config['port']}"
+        ];
+      }
+
+      // Authenticate if password is set
+      if (!empty($this->config['password'])) {
+        $auth = @$this->redis->auth($this->config['password']);
+        if (!$auth) {
+          return [
+            'connected' => FALSE,
+            'error' => 'Redis authentication failed (invalid password)'
+          ];
+        }
+      }
+
+      // Verify connection with PING
+      $ping = @$this->redis->ping();
+      if ($ping !== TRUE && $ping !== 'PONG') {
+        return [
+          'connected' => FALSE,
+          'error' => 'Redis PING command failed'
+        ];
+      }
+
+      return [
+        'connected' => TRUE,
+        'error' => NULL
+      ];
+
+    }
+    catch (Exception $e) {
+      return [
+        'connected' => FALSE,
+        'error' => $e->getMessage()
+      ];
+    }
+  }
+
+  /**
+   * Check Redis reachability and latency
+   */
+  private function checkRedisReachability() {
+    CRM_Core_Error::debug_log_message('Checking Redis reachability and latency');
+    try {
+      $startTime = microtime(TRUE);
+      $result = $this->redis->ping();
+      $latency = (microtime(TRUE) - $startTime) * 1000; // Convert to milliseconds
+
+      $statusCode = ($latency < 50) ? 'ok' : 'warning';
+      $statusMessage = ($latency < 50) ? 'Good' : 'High Latency';
+
+      $details = [
+        'Status: ' . $statusMessage,
+        'Response Time: ' . number_format($latency, 2) . 'ms',
+        'Host: ' . $this->config['host'],
+        'Port: ' . $this->config['port'],
+      ];
+
+      $this->results[] = $this->createStatusMessage(
+        'Redis Connection & Latency',
+        'Reachable - Response time: ' . number_format($latency, 2) . 'ms',
+        implode("\n", $details),
+        $statusCode
+      );
+
+    }
+    catch (Exception $e) {
+      $this->results[] = $this->createErrorMessage(
+        'Redis Reachability Check',
+        'Failed to reach Redis server',
+        $e->getMessage()
+      );
+    }
+  }
+
+  /**
+   * Check Redis configuration
+   */
+  private function checkConfiguration() {
+    CRM_Core_Error::debug_log_message('Checking Redis configuration');
+    try {
+      $info = $this->redis->info('server');
+
+      $configDetails = [
+        'Cache Backend: ' . $this->config['class'],
+        'Redis Version: ' . $info['redis_version'],
+        'Redis Mode: ' . ($info['redis_mode'] ?? 'standalone'),
+        'Key Prefix: ' . $this->config['prefix'],
+        'Cache Timeout (TTL): ' . $this->config['timeout'] . ' seconds',
+        'Password Protected: ' . (empty($this->config['password']) ? 'No' : 'Yes'),
+      ];
+
+      $this->results[] = $this->createStatusMessage(
+        'Redis Configuration',
+        'Configured correctly',
+        implode("\n", $configDetails),
+        'ok'
+      );
+
+    }
+    catch (Exception $e) {
+      $this->results[] = $this->createErrorMessage(
+        'Redis Configuration Check',
+        'Failed to retrieve configuration',
+        $e->getMessage()
+      );
+    }
+  }
+
+  /**
+   * Check Redis memory usage
+   */
+  private function checkMemoryUsage() {
+    CRM_Core_Error::debug_log_message('Checking Redis memory usage');
+    try {
+      $info = $this->redis->info('memory');
+
+      $usedMemory = $info['used_memory'];
+      $maxMemory = $info['maxmemory'] ?? 0;
+
+      // Format bytes to human-readable
+      $usedFormatted = $this->formatBytes($usedMemory);
+      $maxFormatted = ($maxMemory > 0) ? $this->formatBytes($maxMemory) : 'Unlimited';
+
+      $memoryDetails = [
+        'Used Memory: ' . $usedFormatted,
+        'Max Memory: ' . $maxFormatted,
+      ];
+
+      // Calculate percentage if max memory is set
+      if ($maxMemory > 0) {
+        $percentage = ($usedMemory / $maxMemory) * 100;
+        $memoryDetails[] = 'Usage: ' . number_format($percentage, 2) . '%';
+
+        // Check for warnings
+        if ($percentage > 90) {
+          $statusCode = 'error';
+          $status = 'CRITICAL';
+        }
+        elseif ($percentage > 80) {
+          $statusCode = 'warning';
+          $status = 'WARNING';
+        }
+        else {
+          $statusCode = 'ok';
+          $status = 'OK';
+        }
+      }
+      else {
+        $statusCode = 'ok';
+        $status = 'OK';
+      }
+
+      // Memory fragmentation
+      $fragmentation = $info['mem_fragmentation_ratio'] ?? 1.0;
+      $memoryDetails[] = 'Fragmentation Ratio: ' . number_format($fragmentation, 2);
+
+      if ($fragmentation > 1.5) {
+        $memoryDetails[] = 'WARNING: High fragmentation ratio detected. Consider restarting Redis.';
+      }
+
+      $this->results[] = $this->createStatusMessage(
+        'Redis Memory Usage',
+        $status . ' - ' . $usedFormatted . ($maxMemory > 0 ? ' / ' . $maxFormatted : ''),
+        implode("\n", $memoryDetails),
+        $statusCode
+      );
+
+    }
+    catch (Exception $e) {
+      $this->results[] = $this->createErrorMessage(
+        'Redis Memory Check',
+        'Failed to retrieve memory information',
+        $e->getMessage()
+      );
+    }
+  }
+
+  /**
+   * Check Redis key health
+   */
+  private function checkKeyHealth() {
+    CRM_Core_Error::debug_log_message('Checking Redis key health');
+    try {
+      $dbInfo = $this->redis->info('keyspace');
+
+      // Get total keys in database 0
+      $db0 = $dbInfo['db0'] ?? NULL;
+
+      if ($db0) {
+        preg_match('/keys=(\d+)/', $db0, $matches);
+        $totalKeys = $matches[1] ?? 0;
+      }
+      else {
+        $totalKeys = 0;
+      }
+
+      // Count CiviCRM keys using prefix
+      $civiCRMKeys = $this->countKeysByPattern($this->config['prefix'] . '*');
+
+      $keyDetails = [
+        'Total Keys in Database: ' . $totalKeys,
+        'CiviCRM Keys (prefix: ' . $this->config['prefix'] . '): ' . $civiCRMKeys,
+      ];
+
+      if ($totalKeys > 0) {
+        $civiPercentage = ($civiCRMKeys / $totalKeys) * 100;
+        $keyDetails[] = 'CiviCRM Percentage: ' . number_format($civiPercentage, 2) . '%';
+      }
+
+      // Test write/read operation
+      $testKey = $this->config['prefix'] . '_healthcheck_test_' . time();
+      $testValue = 'healthcheck_' . sha1(time());
+
+      try {
+        $this->redis->setEx($testKey, 10, $testValue);
+        $readValue = $this->redis->get($testKey);
+
+        if ($readValue === $testValue) {
+          $keyDetails[] = 'Write/Read Test: PASSED';
+          $statusCode = 'ok';
+        }
+        else {
+          $keyDetails[] = 'Write/Read Test: FAILED (values do not match)';
+          $statusCode = 'warning';
+        }
+
+        // Cleanup
+        $this->redis->del($testKey);
+
+      }
+      catch (Exception $e) {
+        $keyDetails[] = 'Write/Read Test: FAILED - ' . $e->getMessage();
+        $statusCode = 'warning';
+      }
+
+      $this->results[] = $this->createStatusMessage(
+        'Redis Key Health',
+        'Keys: ' . $totalKeys . ' (CiviCRM: ' . $civiCRMKeys . ')',
+        implode("\n", $keyDetails),
+        $statusCode
+      );
+
+    }
+    catch (Exception $e) {
+      $this->results[] = $this->createErrorMessage(
+        'Redis Key Health Check',
+        'Failed to retrieve key information',
+        $e->getMessage()
+      );
+    }
+  }
+
+  /**
+   * Check Redis performance metrics
+   */
+  private function checkPerformanceMetrics() {
+    CRM_Core_Error::debug_log_message('Checking Redis performance metrics');
+    try {
+      $stats = $this->redis->info('stats');
+
+      $totalConnections = $stats['total_connections_received'] ?? 0;
+      $totalCommands = $stats['total_commands_processed'] ?? 0;
+      $connectedClients = $stats['connected_clients'] ?? 0;
+
+      // Calculate commands per second
+      $uptime = $this->redis->info('server')['uptime_in_seconds'] ?? 1;
+      $commandsPerSecond = ($uptime > 0) ? ($totalCommands / $uptime) : 0;
+
+      $performanceDetails = [
+        'Total Connections: ' . $totalConnections,
+        'Connected Clients: ' . $connectedClients,
+        'Total Commands Processed: ' . $totalCommands,
+        'Commands/Second: ' . number_format($commandsPerSecond, 2),
+        'Server Uptime: ' . $this->formatUptime($uptime),
+      ];
+
+      // Check for hit/miss if available
+      if (isset($stats['keyspace_hits']) && isset($stats['keyspace_misses'])) {
+        $hits = $stats['keyspace_hits'];
+        $misses = $stats['keyspace_misses'];
+        $total = $hits + $misses;
+
+        if ($total > 0) {
+          $hitRatio = ($hits / $total) * 100;
+          $performanceDetails[] = 'Cache Hit Ratio: ' . number_format($hitRatio, 2) . '%';
+          $performanceDetails[] = '  Hits: ' . $hits . ', Misses: ' . $misses;
+        }
+      }
+
+      $this->results[] = $this->createStatusMessage(
+        'Redis Performance Metrics',
+        'Clients: ' . $connectedClients . ', Throughput: ' . number_format($commandsPerSecond, 2) . ' cmds/sec',
+        implode("\n", $performanceDetails),
+        'ok'
+      );
+
+    }
+    catch (Exception $e) {
+      $this->results[] = $this->createErrorMessage(
+        'Redis Performance Check',
+        'Failed to retrieve performance metrics',
+        $e->getMessage()
+      );
+    }
+  }
+
+  /**
+   * Check eviction policy
+   */
+  private function checkEvictionPolicy() {
+    CRM_Core_Error::debug_log_message('Checking Redis eviction policy');
+    try {
+      // Get config via CONFIG GET command
+      $config = @$this->redis->config('GET', 'maxmemory-policy');
+
+      if (is_array($config) && isset($config['maxmemory-policy'])) {
+        $policy = $config['maxmemory-policy'];
+      }
+      else {
+        // Fallback to info
+        $info = $this->redis->info('memory');
+        $policy = $info['maxmemory_policy'] ?? 'noeviction';
+      }
+
+      $evictionDetails = [
+        'Eviction Policy: ' . $policy,
+      ];
+
+      // Get eviction stats if available
+      $stats = $this->redis->info('stats');
+      $evictedKeys = $stats['evicted_keys'] ?? 0;
+
+      if ($evictedKeys > 0) {
+        $evictionDetails[] = 'Keys Evicted: ' . $evictedKeys;
+        $statusCode = 'warning';
+      }
+      else {
+        $statusCode = 'ok';
+      }
+
+      // Check if policy is appropriate
+      if ($policy === 'noeviction') {
+        $evictionDetails[] = 'NOTE: Keys will NOT be evicted when memory limit is reached.';
+      }
+
+      $this->results[] = $this->createStatusMessage(
+        'Redis Eviction Policy',
+        'Policy: ' . $policy . ' (' . ($evictedKeys > 0 ? $evictedKeys . ' keys evicted' : 'No evictions') . ')',
+        implode("\n", $evictionDetails),
+        $statusCode
+      );
+
+    }
+    catch (Exception $e) {
+      $this->results[] = $this->createErrorMessage(
+        'Redis Eviction Policy Check',
+        'Failed to retrieve eviction policy',
+        $e->getMessage()
+      );
+    }
+  }
+
+  /**
+   * Check persistence configuration
+   */
+  private function checkPersistence() {
+    CRM_Core_Error::debug_log_message('Checking Redis persistence configuration');
+    try {
+      $info = $this->redis->info('persistence');
+
+      $rdbStatus = $info['rdb_last_save_time'] ?? NULL;
+      $aofEnabled = $info['aof_enabled'] ?? 0;
+
+      $persistenceDetails = [
+        'RDB (Snapshots): ' . (isset($info['rdb_last_save_time']) ? 'Enabled' : 'Disabled'),
+      ];
+
+      if ($rdbStatus) {
+        $lastSave = date('Y-m-d H:i:s', $rdbStatus);
+        $persistenceDetails[] = 'Last RDB Save: ' . $lastSave;
+      }
+
+      $persistenceDetails[] = 'AOF (Append Only File): ' . ($aofEnabled ? 'Enabled' : 'Disabled');
+
+      if ($aofEnabled && isset($info['aof_last_rewrite_time_sec'])) {
+        $persistenceDetails[] = 'Last AOF Rewrite: ' . $info['aof_last_rewrite_time_sec'] . ' seconds ago';
+      }
+
+      // Note: For caching, persistence is less critical
+      $note = 'NOTE: For CiviCRM caching, persistence is optional. Enable if durability is required.';
+      $persistenceDetails[] = $note;
+
+      $this->results[] = $this->createStatusMessage(
+        'Redis Persistence',
+        ($aofEnabled || $rdbStatus) ? 'Enabled' : 'Disabled',
+        implode("\n", $persistenceDetails),
+        'ok'
+      );
+
+    }
+    catch (Exception $e) {
+      // Persistence info may not always be available
+      $this->results[] = $this->createStatusMessage(
+        'Redis Persistence',
+        'Unable to determine',
+        'Persistence status could not be determined: ' . $e->getMessage(),
+        'warning'
+      );
+    }
+  }
+
+  /**
+   * Check client connections
+   */
+  private function checkClientConnections() {
+    CRM_Core_Error::debug_log_message('Checking Redis client connections');
+    try {
+      $stats = $this->redis->info('stats');
+      $server = $this->redis->info('server');
+
+      $connectedClients = $stats['connected_clients'] ?? 0;
+      $maxClients = $server['maxclients'] ?? 'Unlimited';
+
+      $clientDetails = [
+        'Connected Clients: ' . $connectedClients,
+        'Max Clients: ' . $maxClients,
+      ];
+
+      if (is_numeric($maxClients) && $connectedClients > 0) {
+        $percentage = ($connectedClients / $maxClients) * 100;
+        $clientDetails[] = 'Usage: ' . number_format($percentage, 2) . '%';
+
+        if ($percentage > 80) {
+          $statusCode = 'warning';
+          $clientDetails[] = 'WARNING: Approaching maximum client connections.';
+        }
+        else {
+          $statusCode = 'ok';
+        }
+      }
+      else {
+        $statusCode = 'ok';
+      }
+
+      $this->results[] = $this->createStatusMessage(
+        'Redis Client Connections',
+        'Connected: ' . $connectedClients,
+        implode("\n", $clientDetails),
+        $statusCode
+      );
+
+    }
+    catch (Exception $e) {
+      $this->results[] = $this->createErrorMessage(
+        'Redis Client Connections Check',
+        'Failed to retrieve client information',
+        $e->getMessage()
+      );
+    }
+  }
+
+  /**
+   * Count keys matching a pattern
+   *
+   * @param string $pattern
+   * @return int
+   */
+  private function countKeysByPattern($pattern) {
+    CRM_Core_Error::debug_log_message("Counting keys with pattern: $pattern");
+    try {
+      $count = 0;
+      $cursor = '0';
+
+      do {
+        $reply = $this->redis->scan($cursor, $pattern);
+
+        if ($reply === FALSE) {
+          break;
+        }
+
+        $cursor = $reply[0];
+        $keys = $reply[1];
+        $count += count($keys);
+
+      } while ($cursor != '0');
+
+      return $count;
+
+    }
+    catch (Exception $e) {
+      return -1; // Error indicator
+    }
+  }
+
+  /**
+   * Format bytes to human-readable format
+   *
+   * @param int $bytes
+   * @return string
+   */
+  private function formatBytes($bytes) {
+    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+
+    $bytes = max($bytes, 0);
+    $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
+    $pow = min($pow, count($units) - 1);
+    $bytes /= (1 << (10 * $pow));
+
+    return round($bytes, 2) . ' ' . $units[$pow];
+  }
+
+  /**
+   * Format uptime to human-readable format
+   *
+   * @param int $seconds
+   * @return string
+   */
+  private function formatUptime($seconds) {
+    $days = floor($seconds / 86400);
+    $hours = floor(($seconds % 86400) / 3600);
+    $minutes = floor(($seconds % 3600) / 60);
+
+    return "{$days}d {$hours}h {$minutes}m";
+  }
+
+  /**
+   * Create a status message
+   *
+   * @param string $title
+   * @param string $message
+   * @param string $details
+   * @param string $statusCode ('ok', 'warning', 'error')
+   * @return CRM_Utils_Check_Message
+   */
+  private function createStatusMessage($title, $message, $details = '', $statusCode = 'ok') {
+    $severity = [
+      'ok' => \Psr\Log\LogLevel::INFO,
+      'warning' => \Psr\Log\LogLevel::WARNING,
+      'error' => \Psr\Log\LogLevel::ERROR,
+    ][$statusCode] ?? \Psr\Log\LogLevel::INFO;
+
+    $check = new CRM_Utils_Check_Message('redis_healthcheck_' . strtolower(str_replace(' ', '_', $title)), $message, $details);
+    //$check->setSeverity($severity);
+    $check->setLevel(CRM_Utils_Check::severityMap($severity));
+
+    return $check;
+  }
+
+  /**
+   * Create an error message
+   *
+   * @param string $title
+   * @param string $message
+   * @param string $details
+   * @return array
+   */
+  private function createErrorMessage($title, $message, $details = '') {
+    $check = new CRM_Utils_Check_Message('redis_healthcheck_' . strtolower(str_replace(' ', '_', $title)), $message, $details);
+    //$check->setSeverity(\Psr\Log\LogLevel::ERROR);
+    $check->setLevel(CRM_Utils_Check::severityMap(\Psr\Log\LogLevel::ERROR));
+
+    return [$check];
+  }
+
+  /**
+   * Create a warning message
+   *
+   * @param string $title
+   * @param string $message
+   * @param string $details
+   * @return array
+   */
+  private function createWarningMessage($title, $message, $details = '') {
+    $check = new CRM_Utils_Check_Message('redis_healthcheck_' . strtolower(str_replace(' ', '_', $title)), $message, $details);
+    //$check->setSeverity(\Psr\Log\LogLevel::WARNING);
+    $check->setLevel(CRM_Utils_Check::severityMap(\Psr\Log\LogLevel::WARNING));
+
+    return [$check];
+  }
+
+  /**
+   * Disconnect from Redis
+   */
+  private function disconnectRedis() {
+    if ($this->redis !== NULL) {
+      try {
+        @$this->redis->close();
+      }
+      catch (Exception $e) {
+        // Silently fail
+      }
+    }
+  }
+
+  /**
+   * Destructor
+   */
+  public function __destruct() {
+    $this->disconnectRedis();
+  }
+
+}
