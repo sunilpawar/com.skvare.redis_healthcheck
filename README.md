@@ -222,25 +222,25 @@ The health check extension has minimal performance impact:
 
 For issues or feature requests:
 - GitHub: https://github.com/skvare/redis_healthcheck/issues
-- Email: hello@skvare.com
+- Email: info@skvare.com
 
 ## License
 
 AGPLv3 - See LICENSE file for details
 
-## Author
+## Credits
 
-Skvare - https://www.skvare.com
+Developed by [Skvare, LLC](https://skvare.com/contact) for the CiviCRM community.
 
-## Changelog
+## About Skvare
 
-### 1.0.0 (2025-02-11)
-- Initial release
-- Connection and reachability checks
-- Configuration validation
-- Memory usage monitoring
-- Key health analysis
-- Performance metrics
-- Eviction policy monitoring
-- Persistence configuration checks
-- Client connection tracking
+Skvare LLC specializes in CiviCRM development, Drupal integration, and providing technology solutions for nonprofit organizations, professional societies, membership-driven associations, and small businesses. We are committed to developing open source software that empowers our clients and the wider CiviCRM community.
+
+**Contact Information**:
+- Website: [https://skvare.com](https://skvare.com)
+- Email: info@skvare.com
+- GitHub: [https://github.com/Skvare](https://github.com/Skvare)
+
+## Support
+
+[Contact us](https://skvare.com/contact) for support or to learn more.
