@@ -44,7 +44,7 @@ function redis_healthcheck_civicrm_enable(): void {
  * Performs comprehensive Redis health checks and returns status information
  */
 function redis_healthcheck_civicrm_check(&$messages) {
-  $redisHealthCheck = new CRM_Redishealthcheck_Check($messages);
+  $redisHealthCheck = new CRM_RedisHealthcheck_Check($messages);
   $checks = $redisHealthCheck->performChecks();
 
   $messages = array_merge($messages, $checks);

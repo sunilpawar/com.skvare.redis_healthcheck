@@ -1,10 +1,10 @@
 <?php
 /**
- * CRM_Redishealthcheck_Check
+ * CRM_RedisHealthcheck_Check
  *
  * Comprehensive Redis health check implementation with consolidated display
  */
-class CRM_Redishealthcheck_Check {
+class CRM_RedisHealthcheck_Check {
 
   /**
    * Redis connection instance
