@@ -51,7 +51,7 @@ A comprehensive Redis cache monitoring and diagnostics extension for CiviCRM. Th
 1. Download the extension to your CiviCRM extensions directory:
    ```bash
    cd /path/to/civicrm/extensions
-   git clone https://github.com/skvare/redis_healthcheck.git
+   git clone https://github.com/Skvare/com.skvare.redis_healthcheck.git
    ```
 
 2. Enable the extension in CiviCRM:
@@ -221,7 +221,7 @@ The health check extension has minimal performance impact:
 ## Support
 
 For issues or feature requests:
-- GitHub: https://github.com/skvare/redis_healthcheck/issues
+- GitHub: https://github.com/Skvare/com.skvare.redis_healthcheck/issues
 - Email: info@skvare.com
 
 ## License
